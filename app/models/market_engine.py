@@ -1,9 +1,28 @@
+import time
 from tradingview_ta import TA_Handler, Interval
 
 class MarketEngine:
-    @staticmethod
-    def obter_dados_mercado():
-        # Configuração dos ativos usando ETFs hiper líquidos para garantir estabilidade da API
+    """
+    Classe responsável por concentrar as regras de negócio relacionadas 
+    à leitura de mercado e cálculo de viés operacional.
+    """
+    
+    # Sistema de Cache: Evita banimento da API e deixa a tela instantânea
+    _cache_dados = None
+    _ultimo_update = 0
+    _TEMPO_CACHE_SEGUNDOS = 300  # 5 minutos (300 segundos)
+
+    @classmethod
+    def obter_dados_mercado(cls):
+        tempo_atual = time.time()
+
+        # 1. Verifica se o cache existe e ainda está dentro da validade (menos de 5 minutos)
+        if cls._cache_dados and (tempo_atual - cls._ultimo_update) < cls._TEMPO_CACHE_SEGUNDOS:
+            print("[LOG] Retornando dados da Memória CACHE (Super Rápido)")
+            return cls._cache_dados
+            
+        print("[LOG] Buscando dados atualizados no TradingView...")
+
         config_ativos = {
             "S&P 500 (ETF SPY)": {"symbol": "SPY", "exchange": "AMEX", "screener": "america"},
             "EWZ (ETF Brasil NY)": {"symbol": "EWZ", "exchange": "AMEX", "screener": "america"},
@@ -16,7 +35,6 @@ class MarketEngine:
 
         for nome, config in config_ativos.items():
             try:
-                # Conecta no TradingView e puxa os dados do gráfico Diário
                 handler = TA_Handler(
                     symbol=config["symbol"],
                     exchange=config["exchange"],
@@ -25,11 +43,9 @@ class MarketEngine:
                 )
                 analise = handler.get_analysis()
                 
-                # Coleta os indicadores atuais
                 preco_atual = analise.indicators.get("close", 0.0)
                 preco_abertura = analise.indicators.get("open", 0.0)
                 
-                # Calcula a variação percentual do dia
                 if preco_abertura > 0:
                     variacao = ((preco_atual - preco_abertura) / preco_abertura) * 100
                 else:
@@ -42,11 +58,9 @@ class MarketEngine:
                 soma_variacoes += variacao
 
             except Exception as erro:
-                # Se algo falhar, printa no terminal para você debugar, mas não quebra a tela
-                print(f"Erro ao buscar {nome} no TradingView: {erro}")
+                print(f"[LOG] Erro ao buscar {nome} no TradingView: {erro}")
                 resultados[nome] = {"preco": "Indisponível", "variacao": 0.0}
 
-        # Lógica de negócio baseada na confluência macro
         if soma_variacoes > 0.5:
             vies_final = "COMPRA (Confluência Macro de Alta)"
             cor_vies = "success"
@@ -57,4 +71,10 @@ class MarketEngine:
             vies_final = "NEUTRO (Mercado Misto / Cuidado com consolidação)"
             cor_vies = "warning"
 
-        return {"ativos": resultados, "vies": vies_final, "classe_cor": cor_vies}
+        resultado_final = {"ativos": resultados, "vies": vies_final, "classe_cor": cor_vies}
+        
+        # 2. Salva o resultado no cache antes de devolver para o Controller
+        cls._cache_dados = resultado_final
+        cls._ultimo_update = tempo_atual
+
+        return resultado_final
